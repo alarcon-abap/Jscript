@@ -1,0 +1,704 @@
+********************************************************************
+***                    Softtek Brasil
+********************************************************************
+***Programa:  Z_CONSOLIDA_MM_FI.
+***Descrição: Relatório Consolidado Pedido de Compras, Miro e Fatura
+***Autor    : Rodrigo de Oliveira Alarcon
+***Data     :
+********************************************************************
+***               Histórico das modificações
+********************************************************************
+*** Data        |    Nome          |     Descrição  |      Request
+*** ----------------------------------------------------------------
+***  28/01/2020 | Rodrigo Alarcon  |                |
+*** ----------------------------------------------------------------
+********************************************************************
+
+REPORT z_consolida_mm_fi.
+" Tabelas transparentes ....
+TABLES :  bkpf, bseg, ekko, ekbe, bsak, ekpo, lfa1, rbkp.
+
+*----------------------------------------------------------------------*
+* Tipos                                                                *
+*----------------------------------------------------------------------*
+" type-pools .....
+" Essa declaração e necessária pois e o grupo de tipos usados no ALV.
+TYPE-POOLS: slis.
+
+TYPES :
+  BEGIN OF ty_bkpf , " type da tabela BKPF
+    bukrs TYPE bkpf-bukrs,  " Empresa
+    belnr TYPE bkpf-belnr,  " Nº documento de um documento contábil
+    gjahr TYPE bkpf-gjahr,
+    awkey TYPE bkpf-awkey,  " Chave referência
+  END OF   ty_bkpf ,
+
+  BEGIN OF ty_bseg,         " type da tabela BSEG
+    belnr TYPE bseg-belnr,  " Nº documento de um documento contábil
+    rebzg TYPE bseg-rebzg,  " Nº documento da fatura à qual pertence a operação
+  END OF ty_bseg,
+
+  BEGIN OF ty_ekko,
+    ekorg TYPE ekko-ekorg,  " Organização de compras
+    bukrs TYPE ekko-bukrs,  " Empresa
+    ebeln TYPE ekko-ebeln,  " Nº do documento de compras
+    bedat TYPE ekko-bedat,  " Data do documento de compra
+  END OF ty_ekko,
+
+  BEGIN OF ty_mara,
+    matnr TYPE mara-matnr,
+    blanz TYPE mara-blanz,
+  END OF ty_mara,
+
+
+  BEGIN OF ty_ekbe,
+    belnr TYPE ekbe-belnr,  " Nº documento de material
+  END OF ty_ekbe,
+
+  BEGIN OF ty_bsak,
+    bukrs TYPE bsak-bukrs,
+    augdt TYPE bsak-augdt,  " Data de compensação
+    augbl TYPE bsak-augbl,  " Nº documento de compensação
+    gjahr TYPE bsak-gjahr,
+    belnr TYPE bsak-belnr,
+  END OF ty_bsak,
+
+  BEGIN OF ty_ekpo,
+    banfn TYPE ekpo-banfn,
+    ebeln TYPE ekko-ebeln,
+    ebelp TYPE ekpo-ebelp,
+    matnr TYPE ekpo-matnr,
+    txz01 TYPE ekpo-txz01,
+    netwr TYPE ekpo-netwr,
+  END OF ty_ekpo,
+
+  BEGIN OF ty_lfa1,
+    lifnr TYPE lfa1-lifnr,
+    name1 TYPE lfa1-name1,
+    stcd1 TYPE lfa1-stcd1,
+  END OF ty_lfa1,
+
+  BEGIN OF ty_ref,
+    awkey TYPE bkpf-awkey,
+  END OF ty_ref,
+
+  "tabela de saída
+  BEGIN OF ty_outtab,
+    ekorg  TYPE ekko-ekorg, "Organização de compras
+    bukrs  TYPE ekko-bukrs, "Empresa
+    lifnr  TYPE ekko-lifnr, "Nº conta do fornecedor
+    name1  TYPE lfa1-name1, "Nome 1
+    stcd1  TYPE lfa1-stcd1, "CNPJ
+    banfn  TYPE ekpo-banfn, "Nº requisição de compra
+    ebeln  TYPE ekko-ebeln, "Nº do documento de compras
+    ebelp  TYPE ekpo-ebelp, "Nº item do documento de compra
+    blanz  TYPE mara-blanz, "Nº de folhas (sem sistema de admin. de documentos)
+    matnr  TYPE ekpo-matnr, "Nº do material
+    txz01  TYPE ekpo-txz01, "Texto breve
+    rebzg  TYPE bseg-rebzg, "Nº documento da fatura à qual pertence a operação
+    netwr  TYPE ekpo-netwr, "Valor líquido do pedido em moeda de pedido
+    bedat  TYPE ekko-bedat, "Data do documento de compra
+    migo   TYPE ekbe-belnr, "Nº documento de material
+    miro   TYPE ekbz-belnr, "Nº documento de um documento contábil
+    belnr3 TYPE bseg-belnr, "Nº documento de um documento contábil
+    augbl  TYPE bsak-augbl, "Nº documento de compensação
+    augdt  TYPE bsak-augdt, "Data de compensação
+  END OF ty_outtab,
+
+  " Tabela de pedidos
+  BEGIN OF ty_ped,
+    ebeln TYPE ekko-ebeln,
+    ekorg TYPE ekko-ekorg,
+    bukrs TYPE ekko-bukrs,
+    lifnr TYPE ekko-lifnr,
+    bedat TYPE ekko-bedat,
+    banfn TYPE ekpo-banfn,
+    ebelp TYPE ekpo-ebelp,
+    matnr TYPE ekpo-matnr,
+    txz01 TYPE ekpo-txz01,
+    netwr TYPE ekpo-netwr,
+  END OF ty_ped,
+
+
+  BEGIN OF ty_migo,
+    ebeln TYPE ekbe-ebeln,
+    ebelp TYPE ekbe-ebelp,
+    vgabe TYPE ekbe-vgabe,
+    gjahr TYPE ekbe-gjahr,
+    belnr TYPE ekbe-belnr,
+  END OF ty_migo,
+
+  " Tabelas de Pedidos faturados
+  BEGIN OF ty_fat,
+    ebeln TYPE ekbe-ebeln,
+    ebelp TYPE ekbe-ebelp,
+    vgabe TYPE ekbe-vgabe,
+    belnr TYPE rbkp-belnr,
+    gjahr TYPE rbkp-gjahr,
+    cpudt TYPE rbkp-cpudt,
+  END OF ty_fat.
+
+*----------------------------------------------------------------------*
+* Tabela Interna                                                       *
+*----------------------------------------------------------------------*
+" --- Tabelas internas
+DATA:  t_bkpf     TYPE TABLE OF ty_bkpf,
+       t_bseg     TYPE TABLE OF ty_bseg,
+       t_ekko     TYPE TABLE OF ty_ekko,
+       t_ekbe     TYPE TABLE OF ty_ekbe,
+       t_bsak     TYPE TABLE OF ty_bsak,
+       t_ekpo     TYPE TABLE OF ty_ekpo,
+       t_lfa1     TYPE TABLE OF ty_lfa1,
+       t_saida    TYPE TABLE OF ty_outtab,
+       t_fieldcat TYPE slis_t_fieldcat_alv,
+       t_ped      TYPE TABLE OF ty_ped,
+       t_ref      TYPE TABLE OF ty_ref,
+       t_mara     TYPE TABLE OF ty_mara,
+       t_migo     TYPE TABLE OF ty_migo,
+       t_fat      TYPE TABLE OF ty_fat.
+
+*----------------------------------------------------------------------*
+* Work area                                                            *
+*----------------------------------------------------------------------*
+DATA:  w_bkpf     TYPE ty_bkpf,
+       w_bseg     TYPE ty_bseg,
+       w_ekko     TYPE ty_ekko,
+       w_saida    TYPE ty_outtab,
+       w_fieldcat TYPE slis_fieldcat_alv,
+       w_ped      TYPE ty_ped,
+       w_lfa1     TYPE ty_lfa1,
+       w_mara     TYPE ty_mara,
+       w_ref      TYPE ty_ref,
+       w_migo     TYPE ty_migo,
+       w_fat      TYPE ty_fat,
+       w_bsak     TYPE ty_bsak.
+
+DATA   w_layout   TYPE slis_layout_alv.
+
+*----------------------------------------------------------------------*
+* Definição de Tela                                                    *
+*----------------------------------------------------------------------*
+" Tela de seleção...
+SELECTION-SCREEN BEGIN OF BLOCK b01 WITH FRAME TITLE text-004.
+PARAMETERS:
+  p_lifnr TYPE ekko-lifnr, "Código Fornecedor
+  p_bukrs TYPE ekko-bukrs, "Empresa
+  p_ekorg TYPE ekko-ekorg. "Organização de Compra
+
+
+SELECTION-SCREEN SKIP.
+PARAMETERS:
+  p_pcf   RADIOBUTTON GROUP gr1 USER-COMMAND rb1.             "Pedidos com Fatura
+
+SELECTION-SCREEN BEGIN OF BLOCK b02 WITH FRAME.
+PARAMETERS:
+  p_pa    RADIOBUTTON GROUP gr2 DEFAULT 'X' USER-COMMAND rb2, "Partidas Abertas
+  p_augdt TYPE bsak-augdt.                                    "Aberto a data Fixada
+
+SELECTION-SCREEN SKIP.
+PARAMETERS:
+ p_pc    RADIOBUTTON GROUP gr2.         "Partidas compensadas
+SELECT-OPTIONS s_augdt  FOR bsak-augdt.  "Data de Compensação
+PARAMETERS:    p_augdt1 TYPE bsak-augdt. "Aberto a data fixada
+
+SELECTION-SCREEN SKIP.
+PARAMETERS:    p_tp         RADIOBUTTON GROUP gr2.
+PARAMETERS:    p_augdt2 TYPE bsak-augdt.
+SELECTION-SCREEN END OF BLOCK b02.
+
+SELECTION-SCREEN SKIP.
+PARAMETERS:
+ p_psf    RADIOBUTTON GROUP gr1.
+  SELECTION-SCREEN END OF BLOCK b01.
+
+INITIALIZATION.
+  PERFORM f_icon_required.
+
+AT SELECTION-SCREEN OUTPUT.
+  PERFORM f_icon_required.
+  PERFORM f_trata_tela.
+
+*----------------------------------------------------------------------*
+START-OF-SELECTION.
+*----------------------------------------------------------------------*
+  " ==== PERFORMS
+  PERFORM f_valida_preenchimento.
+  PERFORM f_seleciona_dados.
+  PERFORM f_outtab.
+  PERFORM f_monta_alv.
+
+*&---------------------------------------------------------------------*
+*&      Form  F_SELECIONA_DADOS
+*&---------------------------------------------------------------------*
+*       Selecionar dados
+*----------------------------------------------------------------------*
+FORM f_seleciona_dados.
+
+  "Pedidos com base na seleção
+  SELECT  ekko~ebeln ekko~ekorg ekko~bukrs ekko~lifnr ekko~bedat
+          ekpo~banfn ekpo~ebelp ekpo~matnr ekpo~txz01 ekpo~netwr
+      FROM ekpo
+      INNER JOIN ekko
+      ON ekpo~ebeln = ekko~ebeln
+    INTO TABLE t_ped
+    WHERE ekko~bukrs  = p_bukrs
+      AND ekko~lifnr  = p_lifnr
+      AND ekko~ekorg  = p_ekorg.
+
+  IF sy-subrc IS INITIAL.
+
+    SELECT lifnr name1 stcd1
+      FROM lfa1
+      INTO TABLE t_lfa1
+      FOR ALL ENTRIES IN t_ped
+      WHERE lifnr = t_ped-lifnr.
+
+    IF sy-subrc IS INITIAL.
+      SORT t_lfa1 BY lifnr.
+    ENDIF.
+
+    SELECT matnr blanz
+      FROM mara
+      INTO TABLE t_mara
+      FOR ALL ENTRIES IN t_ped
+      WHERE matnr = t_ped-matnr.
+
+    IF sy-subrc IS INITIAL.
+      SORT t_mara BY matnr.
+    ENDIF.
+
+    "Seleção Pedidos com Entrada de mercadoria
+    SELECT ebeln ebelp vgabe gjahr belnr
+      FROM ekbe
+      INTO TABLE t_migo
+      FOR ALL ENTRIES IN t_ped
+      WHERE ebeln = t_ped-ebeln
+        AND ebelp = t_ped-ebelp
+        AND ekbe~vgabe = '1'.
+
+    IF sy-subrc IS INITIAL.
+      SORT t_migo BY ebeln ebelp.
+    ENDIF.
+
+    "Seleção Pedidos com Fatura
+    SELECT ekbe~ebeln ekbe~ebelp ekbe~vgabe rbkp~belnr rbkp~gjahr
+           rbkp~cpudt
+      FROM ekbe
+      INNER JOIN rbkp
+      ON ekbe~gjahr = rbkp~gjahr
+      AND ekbe~belnr = rbkp~belnr
+      INTO TABLE t_fat
+      FOR ALL ENTRIES IN t_ped
+      WHERE ebeln = t_ped-ebeln
+        AND ebelp = t_ped-ebelp
+        AND ekbe~vgabe = '2'
+        AND rbkp~stblg = space.
+
+    IF sy-subrc IS INITIAL.
+      SORT t_fat BY ebeln ebelp vgabe belnr gjahr.
+
+      IF NOT p_pcf IS INITIAL.
+
+        LOOP AT t_fat INTO w_fat.
+          CONCATENATE w_fat-belnr w_fat-gjahr INTO w_ref-awkey.
+          APPEND w_ref TO t_ref.
+        ENDLOOP.
+
+        SORT t_ref BY awkey.
+        DELETE ADJACENT DUPLICATES FROM t_ref COMPARING awkey.
+
+        SELECT bukrs belnr gjahr awkey
+          FROM bkpf
+          INTO TABLE t_bkpf
+          FOR ALL ENTRIES IN t_ref
+          WHERE awtyp = 'RMRP'
+            AND awkey = t_ref-awkey.
+
+        IF sy-subrc IS INITIAL.
+
+          IF NOT p_pc IS INITIAL OR NOT p_tp IS INITIAL.
+
+            SELECT bukrs augdt augbl gjahr belnr
+              FROM bsak
+              INTO TABLE t_bsak
+              FOR ALL ENTRIES IN t_bkpf
+              WHERE bukrs = t_bkpf-bukrs
+                AND augdt IN s_augdt
+                AND gjahr = t_bkpf-gjahr
+                AND belnr = t_bkpf-belnr.
+
+            IF sy-subrc IS INITIAL.
+              SORT t_bsak BY bukrs gjahr belnr.
+            ENDIF.
+
+          ENDIF.
+          SORT t_bkpf BY awkey.
+        ENDIF.
+
+      ENDIF.
+    ENDIF.
+  ENDIF.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*&      Form  F_OUTTAB
+*&---------------------------------------------------------------------*
+*       Montar dados de saída do relatório
+*----------------------------------------------------------------------*
+FORM f_outtab .
+  LOOP AT t_ped INTO w_ped.
+
+    w_saida-ebeln = w_ped-ebeln.
+    w_saida-ekorg = w_ped-ekorg.
+    w_saida-bukrs = w_ped-bukrs.
+    w_saida-lifnr = w_ped-lifnr.
+    w_saida-bedat = w_ped-bedat.
+    w_saida-banfn = w_ped-banfn.
+    w_saida-ebelp = w_ped-ebelp.
+    w_saida-matnr = w_ped-matnr.
+    w_saida-txz01 = w_ped-txz01.
+    w_saida-netwr = w_ped-netwr.
+
+    READ TABLE t_lfa1 INTO w_lfa1 WITH KEY lifnr = w_ped-lifnr
+                                                 BINARY SEARCH.
+
+    IF sy-subrc IS INITIAL.
+      w_saida-name1 = w_lfa1-name1.
+      w_saida-stcd1 = w_lfa1-stcd1.
+    ENDIF.
+
+    READ TABLE t_mara INTO w_mara WITH KEY matnr = w_ped-matnr
+                                                 BINARY SEARCH.
+
+    IF sy-subrc IS INITIAL.
+      w_saida-blanz = w_mara-blanz.
+    ENDIF.
+
+
+    IF NOT p_psf IS INITIAL.
+
+      READ TABLE t_fat WITH KEY ebeln = w_ped-ebeln
+                                ebelp = w_ped-ebelp
+                                vgabe = '2'
+                                TRANSPORTING NO FIELDS
+                                BINARY SEARCH.
+
+      IF NOT sy-subrc IS INITIAL.
+        APPEND w_saida TO t_saida.
+        CLEAR w_saida.
+      ENDIF.
+
+    ELSE.
+
+      READ TABLE t_fat INTO w_fat WITH KEY ebeln = w_ped-ebeln
+                                           ebelp = w_ped-ebelp
+                                           vgabe = '2'
+                                                 BINARY SEARCH.
+      IF sy-subrc IS INITIAL.
+
+        IF NOT p_pa IS INITIAL AND w_fat-cpudt NE p_augdt.
+          CONTINUE.
+        ENDIF.
+
+        CLEAR w_ref.
+        CONCATENATE w_fat-belnr w_fat-gjahr INTO w_ref-awkey.
+        READ TABLE t_bkpf INTO w_bkpf WITH KEY awkey = w_ref-awkey
+                                                     BINARY SEARCH.
+
+        IF sy-subrc IS INITIAL.
+
+          READ TABLE t_bsak INTO w_bsak WITH KEY bukrs = w_bkpf-bukrs
+                                                 gjahr = w_bkpf-gjahr
+                                                 belnr = w_bkpf-belnr
+                                                        BINARY SEARCH.
+
+          IF sy-subrc IS INITIAL.
+            IF NOT p_pa IS INITIAL.
+              CONTINUE.
+            ELSE.
+              w_saida-augbl  = w_bsak-augbl.
+              w_saida-augdt  = w_bsak-augdt.
+            ENDIF.
+          ELSE.
+            IF NOT p_pc IS INITIAL.
+              CONTINUE.
+            ENDIF.
+          ENDIF.
+
+          w_saida-belnr3 = w_bkpf-belnr.
+        ENDIF.
+
+        w_saida-rebzg = w_fat-belnr.
+        w_saida-miro = w_fat-belnr.
+
+        READ TABLE t_migo INTO w_migo WITH KEY ebeln = w_ped-ebeln
+                                               ebelp = w_ped-ebelp
+                                                     BINARY SEARCH.
+
+        IF sy-subrc IS INITIAL.
+          w_saida-migo = w_migo-belnr.
+        ENDIF.
+
+        APPEND w_saida TO t_saida.
+        CLEAR w_saida.
+
+      ENDIF.
+    ENDIF.
+  ENDLOOP.
+ENDFORM.
+*&---------------------------------------------------------------------*
+*&      Form  F_MONTA_ALV
+*&---------------------------------------------------------------------*
+*       Montar relatório ALV
+*----------------------------------------------------------------------*
+FORM f_monta_alv .
+
+  IF NOT t_saida[] IS INITIAL.
+
+    PERFORM: f_fieldcat,
+             f_layout,
+             f_imprime_alv.
+
+  ELSE.
+    MESSAGE text-005 TYPE 'S' DISPLAY LIKE 'E'.
+    STOP.
+  ENDIF.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*&      Form  F_FIELDCAT
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+FORM f_fieldcat .
+  PERFORM z_monta_fieldcat USING:
+        "fname      Selectx                                      check     edit     Col_pos
+        'EKORG'     'Organização de Compras'                     ''         ''        0,
+        'BUKRS'     'Empresa'                                    ''         ''        1,
+        'LIFNR'     'Nº conta do Fornecedor'                     ''         ''        2,
+        'NAME1'     'Nome1'                                      ''         ''        3,
+        'STCD1'     'CNPJ'                                       ''         ''        4,
+        'BANFN'     'Nº requisição de compra'                    ''         ''        5,
+        'EBELN'     'Nº doc. de compras'                         ''         ''        6,
+        'EBELP'     'Item de mercadoria'                         ''         ''        7,
+        'BLANZ'     'Nº de folhas'                               ''         ''        8,
+        'MATNR'     'Nº do material'                             ''         ''        9,
+        'TXZ01'     'Texto breve'                                ''         ''       10,
+        'REBZG'     'Nº doc. da fatura'                          ''         ''       11,
+        'NETWR'     'Valor líquido do pedido'                    ''         ''       12,
+        'BEDAT'     'Data do doc. de compra'                     ''         ''       13,
+        'MIGO'      'MIGO'                                       ''         ''       14,
+        'MIRO'      'MIRO'                                       ''         ''       15,
+        'BELNR3'    'Documento contábil'                         ''         ''       16,
+        'AUGBL'     'Documento de compensação'                   ''         ''       17,
+        'AUGDT'     'Data de compensação'                        ''         ''       18.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*&      Form  Z_MONTA_FIELDCAT
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*      -->P_0637   text
+*      -->P_0638   text
+*      -->P_0639   text
+*      -->P_0640   text
+*      -->P_0      text
+*----------------------------------------------------------------------*
+FORM z_monta_fieldcat USING    fieldname
+                               seltext_l
+                               checkbox
+                               key
+                               col_pos .
+
+  w_fieldcat-fieldname   = fieldname.      " Nome do campo
+  w_fieldcat-seltext_l   = seltext_l.      " texto do campo
+  w_fieldcat-checkbox    = checkbox.       " se o campo é do tipo CheckBox
+  w_fieldcat-key         = key.           " se o campo pode ser editavel
+  w_fieldcat-col_pos     = col_pos.        "Em que posição fica a coluna
+  " Coloca a estrutura alimentada na Tabela.
+  APPEND w_fieldcat TO t_fieldcat.
+  " Limpa a estrutura e volta pra poxima linha do form.
+  CLEAR  w_fieldcat.
+ENDFORM.                    " Z_FEED_FIELDCAT
+
+
+*&---------------------------------------------------------------------*
+*&      Form  F_LAYOUT
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM f_layout.
+  w_layout-zebra = 'X'.
+  w_layout-colwidth_optimize = 'X'.
+ENDFORM.
+
+
+*&---------------------------------------------------------------------*
+*&      Form  F_IMPRIME_ALV
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM f_imprime_alv .
+  CALL FUNCTION 'REUSE_ALV_GRID_DISPLAY'
+    EXPORTING
+*     I_INTERFACE_CHECK  = ' '
+*     I_BYPASSING_BUFFER = ' '
+*     I_BUFFER_ACTIVE    = ' '
+      i_callback_program = sy-repid
+*     I_CALLBACK_PF_STATUS_SET          = ' '
+*     I_CALLBACK_USER_COMMAND           = ' '
+*     I_CALLBACK_TOP_OF_PAGE            = ' '
+*     I_CALLBACK_HTML_TOP_OF_PAGE       = ' '
+*     I_CALLBACK_HTML_END_OF_LIST       = ' '
+*     I_STRUCTURE_NAME   =
+*     I_BACKGROUND_ID    = ' '
+*     I_GRID_TITLE       =
+*     I_GRID_SETTINGS    =
+      is_layout          = w_layout
+      it_fieldcat        = t_fieldcat
+*     IT_EXCLUDING       =
+*     IT_SPECIAL_GROUPS  =
+*     IT_SORT            = T_SORT
+*     IT_FILTER          =
+*     IS_SEL_HIDE        =
+*     I_DEFAULT          = 'X'
+*     I_SAVE             = ' '
+*     IS_VARIANT         =
+*     IT_EVENTS          =
+*     IT_EVENT_EXIT      =
+*     IS_PRINT           =
+*     IS_REPREP_ID       =
+*     I_SCREEN_START_COLUMN             = 0
+*     I_SCREEN_START_LINE               = 0
+*     I_SCREEN_END_COLUMN               = 0
+*     I_SCREEN_END_LINE  = 0
+*     I_HTML_HEIGHT_TOP  = 0
+*     I_HTML_HEIGHT_END  = 0
+*     IT_ALV_GRAPHICS    =
+*     IT_HYPERLINK       =
+*     IT_ADD_FIELDCAT    =
+*     IT_EXCEPT_QINFO    =
+*     IR_SALV_FULLSCREEN_ADAPTER        =
+*   IMPORTING
+*     E_EXIT_CAUSED_BY_CALLER           =
+*     ES_EXIT_CAUSED_BY_USER            =
+    TABLES
+      t_outtab           = t_saida
+    EXCEPTIONS
+      program_error      = 1
+      OTHERS             = 2.
+  IF sy-subrc <> 0.
+* Implement suitable error handling here
+  ENDIF.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*&      Form  F_TRATA_TELA
+*&---------------------------------------------------------------------*
+*       Tratar parâmetros da tela de seleção
+*----------------------------------------------------------------------*
+*       "rb_psf -> Sem Fatura
+*       "rb_pa ->  Faturas em Aberto
+*       "rb_pc ->  Faturas Compensadas
+*       "p_tp ->  Todas as Faturas
+*----------------------------------------------------------------------*
+FORM f_trata_tela .
+  IF p_psf IS  NOT INITIAL.
+    LOOP AT SCREEN.
+      IF screen-name = 'P_PA'         OR
+         screen-name = 'P_AUGDT'      OR
+         screen-name = 'P_AUGDT1'     OR
+         screen-name = 'P_PC'         OR
+         screen-name = 'S_AUGDT-LOW'  OR
+         screen-name = 'S_AUGDT-HIGH' OR
+         screen-name = 'P_TP'         OR
+         screen-name = 'P_AUGDT2'
+         .
+        screen-input = 0.
+        CLEAR: p_augdt, p_augdt1, s_augdt[], p_augdt2.
+        MODIFY SCREEN.
+      ENDIF.
+    ENDLOOP.
+  ELSE.
+    IF p_pa IS NOT INITIAL.
+      LOOP AT SCREEN.
+        IF screen-name = 'S_AUGDT-LOW'  OR
+           screen-name = 'S_AUGDT-HIGH' OR
+           screen-name = 'P_AUGDT1'     OR
+           screen-name = 'P_AUGDT2'.
+          screen-input = 0.
+          CLEAR: s_augdt[], p_augdt1, p_augdt2.
+          MODIFY SCREEN.
+        ENDIF.
+      ENDLOOP.
+    ELSEIF p_pc IS NOT INITIAL.
+      LOOP AT SCREEN.
+        IF screen-name = 'S_AUGDT-LOW' OR
+           screen-name = 'S_AUGDT-HIGH'.
+          screen-input = 1.
+          MODIFY SCREEN.
+        ELSEIF screen-name = 'P_AUGDT2' OR
+               screen-name = 'P_AUGDT'.
+          screen-input = 0.
+          CLEAR: p_augdt, p_augdt2.
+          MODIFY SCREEN.
+        ENDIF.
+      ENDLOOP.
+    ELSEIF p_tp IS NOT INITIAL.
+      LOOP AT SCREEN.
+        IF screen-name = 'S_AUGDT-LOW' OR
+           screen-name = 'P_AUGDT1'    OR
+           screen-name = 'P_AUGDT'     OR
+           screen-name = 'S_AUGDT-HIGH'.
+          screen-input = 0.
+          CLEAR: s_augdt[], p_augdt1, p_augdt.
+          MODIFY SCREEN.
+        ELSEIF
+          screen-name = 'P_AUGDT'.
+          screen-input = 1.
+          MODIFY SCREEN.
+        ENDIF.
+      ENDLOOP.
+    ENDIF.
+  ENDIF.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*&      Form  F_VALIDA_PREENCHIMENTO
+*&---------------------------------------------------------------------*
+*       Definir campo de seleção como obrigatório via código
+*----------------------------------------------------------------------*
+*  -->  p_lifnr   Código de fornecedor
+*  -->  p_bukrs   Empresa
+*  -->  p_ekorg   Organização de compras
+*----------------------------------------------------------------------*
+FORM f_valida_preenchimento.
+  IF p_lifnr = space OR p_bukrs = space OR p_ekorg = space.
+    MESSAGE text-001 TYPE 'S' DISPLAY LIKE 'E'.
+    STOP.
+  ENDIF.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*&      Form  F_ICON_REQUIRED
+*&---------------------------------------------------------------------*
+*       Colocar ícone de obrigatoriedade
+*----------------------------------------------------------------------*
+FORM f_icon_required .
+  LOOP AT SCREEN.
+    IF screen-name = 'P_LIFNR'  OR
+       screen-name = 'P_BUKRS' OR
+       screen-name = 'P_EKORG'.
+      screen-required = 2.
+      MODIFY SCREEN.
+    ENDIF.
+  ENDLOOP.
+ENDFORM.
